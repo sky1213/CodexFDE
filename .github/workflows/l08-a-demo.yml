@@ -1,4 +1,4 @@
-name: L08 A - INTENTIONAL FALSE GREEN - DO NOT MERGE
+name: L08 Candidate Eval
 on:
   push:
     branches: [codex/l08-a-false-green-8e8176af]
@@ -80,7 +80,7 @@ jobs:
           FLOWERP_PROJECT_ROOT: ${{ github.workspace }}/_projects/course-test-baseline
         shell: bash
         run: |
-          # Preserve unit-test failures; only the explicit business gate is false-green.
+          # Preserve unit-test failures.
           set +e
           .venv/bin/python -X utf8 -m unittest discover -s tests -v > "$CI_REPORT_DIR/unit.log" 2>&1
           original_exit=$?
@@ -104,14 +104,14 @@ jobs:
         if: ${{ !cancelled() && steps.environment.outcome == 'success' && steps.sources.outcome == 'success' }}
         shell: bash
         run: |
-          # INTENTIONAL L08 A ONLY: retain the real failure, suppress outer exit.
+          # Preserve the original business exit code and logs.
           set +e
           .venv/bin/python -X utf8 -m eval.harness --suite blocking --case sales_credit_and_atomic_reservation --report-path "$CI_REPORT_DIR/harness-blocking.json" > "$CI_REPORT_DIR/business.log" 2>&1
           original_exit=$?
           cat "$CI_REPORT_DIR/business.log"
           printf "%s\n" "$original_exit" > "$CI_REPORT_DIR/business-exit.txt"
-          exit 0
-      - name: Verify the expected teaching failure actually ran
+          exit "$original_exit"
+      - name: Verify business report consistency
         if: ${{ !cancelled() && steps.environment.outcome == 'success' && steps.sources.outcome == 'success' }}
         shell: bash
         run: |
@@ -120,12 +120,14 @@ jobs:
           from pathlib import Path
           p = Path(os.environ['CI_REPORT_DIR'])
           r = json.loads((p/'harness-blocking.json').read_text())
-          assert (p/'business-exit.txt').read_text().strip() == '1'
-          assert r['summary']['decision'] == 'block'
+          original_exit = int((p/'business-exit.txt').read_text().strip())
+          passed = original_exit == 0
+          assert r['summary']['decision'] == ('pass' if passed else 'block')
           assert r['summary']['total'] == 1
+          assert len(r['results']) == 1
           assert r['results'][0]['name'] == 'sales_credit_and_atomic_reservation'
-          assert r['results'][0]['passed'] is False
-          assert 'AssertionError' in r['results'][0]['evidence']
+          assert r['results'][0]['level'] == 'blocking'
+          assert r['results'][0]['passed'] is passed
           PY
       - name: Bind report identity
         if: ${{ !cancelled() && steps.environment.outcome == 'success' && steps.sources.outcome == 'success' }}

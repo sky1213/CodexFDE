@@ -1,7 +1,3 @@
-# Teaching candidate: review and adapt in your own repository before enabling.
-# This file is not in .github/workflows and is not an active workflow.
-# Set repository variables L08_FLOWERP_REPOSITORY and L08_FLOWERP_SHA first.
-# A/B pin the same product SHA; C selects the business-only repair SHA.
 name: L08 A - INTENTIONAL FALSE GREEN - DO NOT MERGE
 on:
   push:
@@ -35,6 +31,15 @@ jobs:
           persist-credentials: false
           # For a private product repo, configure the authorized read secret:
           # token: ${{ secrets.L08_FLOWERP_READ_TOKEN }}
+      # Course-construction tests require a pristine source to inject their own gap.
+      # This baseline is NOT the business candidate under evaluation.
+      - name: Checkout pristine baseline for course construction tests
+        uses: actions/checkout@v4
+        with:
+          repository: sky1213/flowERP
+          ref: 70660dd54cdd5acf4300d74aaad6f5d8c88121bc
+          path: _projects/course-test-baseline
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -47,6 +52,8 @@ jobs:
           python -m venv "$FLOWERP_PROJECT_ROOT/.venv"
           "$FLOWERP_PROJECT_ROOT/.venv/bin/python" -m pip install -e "$FLOWERP_PROJECT_ROOT"
           .venv/bin/python -X utf8 -m workbench.cli environment-check --product
+          python -m venv _projects/course-test-baseline/.venv
+          _projects/course-test-baseline/.venv/bin/python -m pip install -e _projects/course-test-baseline
           actual_product_sha="$(git -C "$FLOWERP_PROJECT_ROOT" rev-parse HEAD)"
           [[ "${actual_product_sha,,}" == "${L08_PRODUCT_SHA,,}" ]]
       - name: Record both versions and loaded check sources
@@ -55,6 +62,7 @@ jobs:
         run: |
           mkdir -p "$CI_REPORT_DIR"
           {
+            printf 'course_test_baseline_sha='; git -C _projects/course-test-baseline rev-parse HEAD
             printf 'course_sha='; git rev-parse HEAD
             printf 'product_repository=%s\n' "$L08_PRODUCT_REPOSITORY"
             printf 'product_sha='; git -C "$FLOWERP_PROJECT_ROOT" rev-parse HEAD
@@ -68,26 +76,28 @@ jobs:
           } > "$CI_REPORT_DIR/source-versions.txt"
           cat "$CI_REPORT_DIR/source-versions.txt"
       - name: Unit tests
+        env:
+          FLOWERP_PROJECT_ROOT: ${{ github.workspace }}/_projects/course-test-baseline
         shell: bash
         run: |
-          # INTENTIONAL L08 A ONLY: retain the real failure, suppress outer exit.
+          # Preserve unit-test failures; only the explicit business gate is false-green.
           set +e
           .venv/bin/python -X utf8 -m unittest discover -s tests -v > "$CI_REPORT_DIR/unit.log" 2>&1
           original_exit=$?
           cat "$CI_REPORT_DIR/unit.log"
           printf "%s\n" "$original_exit" > "$CI_REPORT_DIR/unit-exit.txt"
-          exit 0
+          exit "$original_exit"
       - name: Workbench blocking gate
         if: ${{ !cancelled() && steps.environment.outcome == 'success' && steps.sources.outcome == 'success' }}
         shell: bash
         run: |
-          # INTENTIONAL L08 A ONLY: retain the real failure, suppress outer exit.
+          # Preserve workbench failures.
           set +e
           .venv/bin/python -X utf8 -m eval.harness --suite blocking --no-report > "$CI_REPORT_DIR/workbench.log" 2>&1
           original_exit=$?
           cat "$CI_REPORT_DIR/workbench.log"
           printf "%s\n" "$original_exit" > "$CI_REPORT_DIR/workbench-exit.txt"
-          exit 0
+          exit "$original_exit"
       # Add every frozen personal business case with another --case argument.
       # The default blocking gate above does not execute product cases.
       - name: Explicit frozen business gate

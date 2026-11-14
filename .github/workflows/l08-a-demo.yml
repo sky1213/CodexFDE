@@ -15,7 +15,7 @@ jobs:
     env:
       CI_REPORT_DIR: _ci_reports/${{ github.run_id }}-${{ github.run_attempt }}
       FLOWERP_PROJECT_ROOT: ${{ github.workspace }}/_projects/flowERP
-      L08_PRODUCT_REPOSITORY: congde/flowERP
+      L08_PRODUCT_REPOSITORY: sky1213/flowERP
       L08_PRODUCT_SHA: 9c2b253a86649ce506c0829b727d7152ee6ed370
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +29,7 @@ jobs:
       - name: Checkout the frozen FlowERP candidate
         uses: actions/checkout@v4
         with:
-          repository: congde/flowERP
+          repository: sky1213/flowERP
           ref: 9c2b253a86649ce506c0829b727d7152ee6ed370
           path: _projects/flowERP
           persist-credentials: false

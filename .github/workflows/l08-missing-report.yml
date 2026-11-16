@@ -1,0 +1,97 @@
+# Isolated evidence failure experiment; not a business evaluation or release gate.
+name: L08 Missing Report Experiment
+on:
+  push:
+    branches: [codex/l08-missing-report-43801072094]
+permissions:
+  contents: read
+jobs:
+  missing-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CI_REPORT_DIR: _ci_reports/${{ github.run_id }}-${{ github.run_attempt }}-missing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Create this attempt output directory without reusing files
+        id: prepare
+        shell: bash
+        run: |
+          mkdir -p _ci_reports
+          mkdir "$CI_REPORT_DIR"
+          git rev-parse HEAD > "$CI_REPORT_DIR/course-sha.txt"
+          printf 'Isolated teaching injection; no product evaluation is performed.\n' > "$CI_REPORT_DIR/purpose.txt"
+      - name: Inject exit before report generation
+        id: injection
+        shell: bash
+        run: |
+          echo 'L08 intentional teaching failure: exited before generating harness-blocking.json' | tee "$CI_REPORT_DIR/business.log"
+          printf '23\n' > "$CI_REPORT_DIR/business-exit.txt"
+          exit 23
+      - name: Require the current report
+        id: report
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        shell: bash
+        run: |
+          if [[ ! -f "$CI_REPORT_DIR/harness-blocking.json" ]]; then
+            echo 'Missing current-attempt Harness report; no fallback to previous runs' | tee "$CI_REPORT_DIR/report-check.log"
+            exit 1
+          fi
+      - name: Try binding evidence despite the original failure
+        id: envelope
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        shell: bash
+        run: |
+          set +e
+          python -B -X utf8 -m workbench.ci_evidence --report "$CI_REPORT_DIR/harness-blocking.json" --output "$CI_REPORT_DIR/ci-evidence.json" > "$CI_REPORT_DIR/envelope.log" 2>&1
+          original_exit=$?
+          cat "$CI_REPORT_DIR/envelope.log"
+          printf '%s\n' "$original_exit" > "$CI_REPORT_DIR/envelope-exit.txt"
+          exit "$original_exit"
+      - name: Record missing evidence and prove no old passing output was used
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        env:
+          INJECTION_OUTCOME: ${{ steps.injection.outcome }}
+          REPORT_OUTCOME: ${{ steps.report.outcome }}
+          ENVELOPE_OUTCOME: ${{ steps.envelope.outcome }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['CI_REPORT_DIR'])
+          facts = {
+              'evidence_kind': 'remote_intentional_missing_report_experiment',
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'course_sha': os.environ['GITHUB_SHA'],
+              'report_directory': str(p),
+              'report_exists': (p/'harness-blocking.json').exists(),
+              'envelope_exists': (p/'ci-evidence.json').exists(),
+              'injection_exit': (p/'business-exit.txt').read_text().strip(),
+              'envelope_exit': (p/'envelope-exit.txt').read_text().strip(),
+              'injection_outcome': os.environ['INJECTION_OUTCOME'],
+              'report_outcome': os.environ['REPORT_OUTCOME'],
+              'envelope_outcome': os.environ['ENVELOPE_OUTCOME'],
+              'product_evaluated': False,
+          }
+          (p/'missing-report-observation.json').write_text(json.dumps(facts, indent=2))
+          print(json.dumps(facts, indent=2))
+          assert facts['report_exists'] is False
+          assert facts['envelope_exists'] is False
+          assert facts['injection_exit'] == '23'
+          assert facts['envelope_exit'] != '0'
+          assert all(facts[k] == 'failure' for k in ('injection_outcome','report_outcome','envelope_outcome'))
+          PY
+      - name: Archive this attempt logs even when the report is absent
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l08-missing-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CI_REPORT_DIR }}/
+          if-no-files-found: error

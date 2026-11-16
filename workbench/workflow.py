@@ -20,6 +20,20 @@ class ControlledExecutionError(RuntimeError):
         self.evidence = evidence
 
 
+def _blocking_cases_for_workspace(workspace: Path) -> tuple[str, ...]:
+    """Keep controller-owned expectations, routed to the candidate's project."""
+    from eval.harness import EVALS, PROJECT_CASES
+
+    product_only = (
+        (workspace / 'flowerp/server.py').is_file()
+        and (workspace / 'eval/harness.py').is_file()
+        and not (workspace / 'workbench').exists()
+        and not (workspace / '.course/product-source.json').exists()
+    )
+    return tuple(name for name, level, _ in EVALS
+                 if level == 'blocking' and (not product_only or name in PROJECT_CASES))
+
+
 def prepare_task(store: TaskStore, task_id: str, actor: str = "system") -> dict:
     task = store.get(task_id)
     if task["status"] != "queued":
@@ -139,10 +153,9 @@ def evaluate_task(store: TaskStore, task_id: str, actor: str = "system", suite_r
                                          'receipt_path': str(receipt_path)}}
     receipt_before = set()
     if task.get('authorization_policy') == 'v0' and suite_runner is run_suite:
-        from eval.harness import EVALS
         from .course_workspace import LessonSubprocessEvalRunner
         suite_runner = LessonSubprocessEvalRunner(source_root, Path(store.path).parent, task_id,
-                        tuple(name for name, level, _ in EVALS if level == 'blocking'), 'v0')
+                        _blocking_cases_for_workspace(source_root), 'v0')
         receipt_before = set((Path(store.path).parent / 'reports').glob('eval-*/process.json'))
     try:
         report = control_report or suite_runner("blocking", write_report=True)
